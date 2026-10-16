@@ -8,7 +8,7 @@ source.dir = .
 source.include_exts = py,png,jpg,kv,atlas
 # The original desktop tool is kept in the repo but must not ship: bert.py runs
 # argparse and pywifi at import time, and neither works on Android.
-source.exclude_patterns = bert.py,toot.py,requirements.txt,.github/*
+source.exclude_patterns = bert.py,toot.py,requirements.txt,.github/*,p4a-recipes/*,dist/*
 
 version = 2.0.666
 
