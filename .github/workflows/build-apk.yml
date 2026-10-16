@@ -43,19 +43,28 @@ jobs:
           python -m pip install --upgrade pip
           pip install buildozer cython==0.29.36
 
-      # android.accept_sdk_license alone is unreliable, and sdkmanager is not on
-      # PATH until buildozer has fetched the SDK, so the licence hashes are
-      # written up front where sdkmanager will look for them.
-      - name: Pre-accept Android SDK licenses
-        run: |
-          LICENSE_DIR=~/.buildozer/android/platform/android-sdk/licenses
-          mkdir -p "$LICENSE_DIR"
-          echo "24333f8a63b6825ea9c5514f83c2829b004d1fee" > "$LICENSE_DIR/android-sdk-license"
-          echo "84831b9409646a918e30573bab4c9c91346d8abd" > "$LICENSE_DIR/android-sdk-preview-license"
-          echo "d975f751698a77b662f1254ddbeed3901e976f5a" > "$LICENSE_DIR/intel-android-extra-license"
-
+      # Licences must not be seeded before this point. Creating
+      # android-sdk/licenses/ makes buildozer report "Android SDK found" and skip
+      # installing the SDK tools entirely, which then fails on a missing
+      # sdkmanager. android.accept_sdk_license in buildozer.spec handles the
+      # prompts instead, and the licence files are topped up afterwards for any
+      # package sdkmanager pulls later.
       - name: Build debug APK
-        run: buildozer -v android debug
+        run: |
+          set -o pipefail
+          buildozer -v android debug 2>&1 | tee build-output.log || {
+            SDK=~/.buildozer/android/platform/android-sdk
+            if [ -d "$SDK" ]; then
+              mkdir -p "$SDK/licenses"
+              echo "24333f8a63b6825ea9c5514f83c2829b004d1fee" > "$SDK/licenses/android-sdk-license"
+              echo "84831b9409646a918e30573bab4c9c91346d8abd" > "$SDK/licenses/android-sdk-preview-license"
+              echo "d975f751698a77b662f1254ddbeed3901e976f5a" > "$SDK/licenses/intel-android-extra-license"
+              echo "Retrying after writing SDK licences"
+              buildozer -v android debug 2>&1 | tee -a build-output.log
+            else
+              exit 1
+            fi
+          }
 
       - uses: actions/upload-artifact@v4
         if: success()
@@ -70,6 +79,7 @@ jobs:
         with:
           name: buildozer-failure-log
           path: |
+            build-output.log
             .buildozer/android/platform/build-*/build.log
             .buildozer/**/*.log
           if-no-files-found: ignore
