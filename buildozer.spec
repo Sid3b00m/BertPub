@@ -14,6 +14,13 @@ version = 2.0.666
 
 requirements = python3,kivy,pyjnius,android,bleak
 
+# bleak has no recipe in the p4a tree, so p4a falls back to installing it as a
+# plain pip package. That ships the Python half of its Android backend but never
+# compiles the PythonScanCallback / PythonBluetoothGattCallback Java classes it
+# binds to, so scanning raises at runtime in an otherwise healthy APK. bleak
+# carries its own recipe; CI populates this directory from the installed copy.
+p4a.local_recipes = ./p4a-recipes
+
 orientation = portrait
 fullscreen = 0
 

@@ -8,6 +8,9 @@ myenv/
 # buildozer / python-for-android
 .buildozer/
 bin/
+dist/
+# staged from the installed bleak during CI
+p4a-recipes/
 
 # runtime database
 pork.db

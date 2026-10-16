@@ -47,7 +47,21 @@ jobs:
             pkg-config gettext \
             zlib1g-dev libncurses-dev libtinfo6 cmake libffi-dev libssl-dev ccache
           python -m pip install --upgrade pip
-          pip install buildozer cython==0.29.36
+          pip install buildozer cython==0.29.36 bleak
+
+      # Sourced from the installed bleak so the recipe always matches the
+      # version being built, rather than drifting against a vendored copy.
+      - name: Stage bleak's p4a recipe
+        run: |
+          RECIPES=$(python -c "import bleak, os; print(os.path.join(os.path.dirname(bleak.__file__), 'backends', 'p4android', 'recipes'))")
+          echo "bleak recipes: $RECIPES"
+          ls -R "$RECIPES"
+          mkdir -p p4a-recipes
+          cp -r "$RECIPES"/. p4a-recipes/
+          # Absolute path: buildozer resolves relative local_recipes
+          # inconsistently depending on the working directory.
+          sed -i "s|^p4a.local_recipes.*|p4a.local_recipes = $(pwd)/p4a-recipes|" buildozer.spec
+          grep '^p4a.local_recipes' buildozer.spec
 
       # Licences must not be seeded before this point. Creating
       # android-sdk/licenses/ makes buildozer report "Android SDK found" and skip
@@ -71,6 +85,21 @@ jobs:
               exit 1
             fi
           }
+
+      # A pip-installed bleak produces an APK that builds, installs and launches
+      # but throws the moment it scans, so the Java side is checked explicitly.
+      - name: Verify bleak JNI classes reached the dex
+        run: |
+          python - <<'PY'
+          import glob, sys, zipfile
+          apk = glob.glob('bin/*.apk')[0]
+          z = zipfile.ZipFile(apk)
+          dexes = [n for n in z.namelist() if n.endswith('.dex')]
+          found = [d for d in dexes if b'PythonScanCallback' in z.read(d)]
+          if not found:
+              sys.exit('FAIL: PythonScanCallback missing from dex -- BLE scanning would throw at runtime')
+          print(f'OK: bleak scan callback present in {found}')
+          PY
 
       - uses: actions/upload-artifact@v4
         if: success()
