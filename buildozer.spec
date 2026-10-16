@@ -27,6 +27,13 @@ android.api = 34
 android.minapi = 26
 android.ndk_api = 26
 
+# Left unpinned, buildozer grabs the newest build-tools (37.x), whose licence
+# differs from the ones pre-accepted in CI, and the install silently skips --
+# which surfaces much later as "Aidl not found". Pin it to match android.api.
+android.build_tools_version = 34.0.0
+
+android.accept_sdk_license = True
+
 # arm64 only for now. Every phone from roughly 2016 on is arm64-v8a, and adding
 # armeabi-v7a doubles CI build time.
 android.archs = arm64-v8a
