@@ -32,13 +32,19 @@ jobs:
             .buildozer
           # No restore-keys on purpose: a failed run can cache a half-installed
           # SDK, and falling back to it would poison every subsequent build.
-          key: buildozer-${{ hashFiles('buildozer.spec') }}
+          # The workflow is in the key too, so changing the apt set or build
+          # steps starts from clean rather than reusing a broken recipe tree.
+          key: buildozer-${{ hashFiles('buildozer.spec', '.github/workflows/build-apk.yml') }}
 
       - name: Install build dependencies
         run: |
           sudo apt-get update
+          # automake supplies aclocal, without which autoreconf cannot pull in
+          # libtool's macros and the libffi recipe dies on an undefined
+          # LT_SYS_SYMBOL_USCORE.
           sudo apt-get install -y --no-install-recommends \
-            git zip unzip autoconf libtool pkg-config \
+            git zip unzip autoconf automake libtool libtool-bin libltdl-dev m4 \
+            pkg-config gettext \
             zlib1g-dev libncurses-dev libtinfo6 cmake libffi-dev libssl-dev ccache
           python -m pip install --upgrade pip
           pip install buildozer cython==0.29.36
