@@ -1,0 +1,63 @@
+name: Build APK
+
+on:
+  push:
+    branches: [android-port, main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # The SDK, NDK and p4a build artifacts are several GB and dominate the
+      # run time, so they are keyed on buildozer.spec and reused until it moves.
+      - name: Cache buildozer state
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.buildozer
+            .buildozer
+          key: buildozer-${{ hashFiles('buildozer.spec') }}
+          restore-keys: buildozer-
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            git zip unzip autoconf libtool pkg-config \
+            zlib1g-dev libncurses-dev libtinfo6 cmake libffi-dev libssl-dev ccache
+          python -m pip install --upgrade pip
+          pip install buildozer cython==0.29.36
+
+      - name: Build debug APK
+        run: buildozer -v android debug
+
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: BertAlert-debug-apk
+          path: bin/*.apk
+          if-no-files-found: error
+
+      - name: Upload build log on failure
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: buildozer-failure-log
+          path: |
+            .buildozer/android/platform/build-*/build.log
+            .buildozer/**/*.log
+          if-no-files-found: ignore
