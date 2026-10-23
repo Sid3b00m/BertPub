@@ -15,18 +15,11 @@ from kivy.lang import Builder
 from kivy.properties import BooleanProperty, StringProperty
 from kivy.uix.boxlayout import BoxLayout
 
+import permissions
 from scanner import Engine
 from storage import Store
 
 MAX_ROWS = 200
-
-RUNTIME_PERMISSIONS = [
-    "android.permission.ACCESS_FINE_LOCATION",
-    "android.permission.ACCESS_COARSE_LOCATION",
-    "android.permission.BLUETOOTH_SCAN",
-    "android.permission.BLUETOOTH_CONNECT",
-    "android.permission.POST_NOTIFICATIONS",
-]
 
 KV = """
 <Root>:
@@ -48,6 +41,15 @@ KV = """
         size_hint_y: None
         height: dp(30)
 
+    # Collapses to nothing once there is no blocker left to clear.
+    Button:
+        text: root.blocker_action
+        on_release: root.fix_blocker()
+        size_hint_y: None
+        height: dp(44) if root.blocker_action else 0
+        opacity: 1 if root.blocker_action else 0
+        disabled: not root.blocker_action
+
     BoxLayout:
         size_hint_y: None
         height: dp(48)
@@ -56,6 +58,7 @@ KV = """
         Button:
             id: toggle
             text: 'Stop' if root.running else 'Start'
+            disabled: not root.ready
             on_release: root.toggle()
 
         Button:
@@ -101,11 +104,13 @@ KV = """
 
 
 class Root(BoxLayout):
-    status = StringProperty("Idle")
+    status = StringProperty("Starting")
     hits_text = StringProperty("")
     seen_text = StringProperty("")
     running = BooleanProperty(False)
     verbose = BooleanProperty(True)
+    ready = BooleanProperty(False)
+    blocker_action = StringProperty("")
 
     def toggle(self):
         app = App.get_running_app()
@@ -113,6 +118,9 @@ class Root(BoxLayout):
             app.stop_scan()
         else:
             app.start_scan()
+
+    def fix_blocker(self):
+        App.get_running_app().fix_blocker()
 
 
 class BertAlertApp(App):
@@ -125,27 +133,96 @@ class BertAlertApp(App):
         self._seen_rows = []
         self._hit_rows = []
         self._store = Store(self.user_data_dir)
+        self._blocker = None
+        self._prompts = 0
         return self.root_widget
 
     def on_start(self):
-        self._request_permissions()
-
-    def _request_permissions(self):
-        try:
-            from android.permissions import request_permissions
-        except ImportError:
-            self._set_status("Not running on Android")
+        if not permissions.AVAILABLE:
+            self.root_widget.ready = True
+            self._set_status("Desktop mode: BLE only, no Wi-Fi")
             return
-        # Background location is deliberately left out of this batch. Bundling
-        # it makes Android deny the whole request outright (bleak issue #1542).
-        request_permissions(RUNTIME_PERMISSIONS)
+        # Asked as one batch on first launch so the user clears the dialogs
+        # once rather than meeting a new one per feature. Background location
+        # stays out of it -- bundling that makes Android deny the whole
+        # request outright (bleak issue #1542).
+        pending = permissions.missing(permissions.required() + permissions.optional())
+        if pending:
+            self._set_status("Waiting for permission")
+            self._prompts = 1
+            permissions.request(pending, self._on_permission_result)
+        else:
+            self._refresh_readiness()
+
+    def _on_permission_result(self, _permissions, _results):
+        self._refresh_readiness()
+
+    def on_resume(self):
+        # Catches the return trip from Settings, the location toggle or the
+        # Bluetooth radio, any of which can clear the current blocker.
+        self._refresh_readiness()
+
+    def _find_blocker(self):
+        """The first thing standing between the user and a working scan."""
+        if permissions.missing(permissions.required()):
+            if not permissions.precise_location() and permissions.granted(
+                permissions.LOCATION_COARSE
+            ):
+                return ("permissions", "Grant precise location",
+                        "Approximate location is too coarse for Wi-Fi scans")
+            return ("permissions", "Grant permissions",
+                    "Location and Bluetooth permission needed to scan")
+        if not permissions.location_services_enabled():
+            return ("location", "Turn on location",
+                    "Location services are off; both radios return nothing")
+        if not permissions.bluetooth_enabled():
+            return ("bluetooth", "Turn on Bluetooth", "Bluetooth is off")
+        return None
+
+    @mainthread
+    def _refresh_readiness(self):
+        # Android hands permission results back on its own thread, and a scan
+        # in progress owns the status line, so this is both deferred to the UI
+        # thread and skipped while running. Off Android there is nothing to
+        # query and every permission would read as denied.
+        if not permissions.AVAILABLE or self.root_widget.running:
+            return
+
+        blocker = self._find_blocker()
+        self._blocker = blocker[0] if blocker else None
+        self.root_widget.blocker_action = blocker[1] if blocker else ""
+        self.root_widget.ready = blocker is None
+
+        if blocker:
+            self._set_status(blocker[2])
+        elif permissions.missing(permissions.optional()):
+            self._set_status("Ready. Alerts are on-screen only")
+        else:
+            self._set_status("Ready")
+
+    def fix_blocker(self):
+        if self._blocker == "location":
+            permissions.open_location_settings()
+        elif self._blocker == "bluetooth":
+            permissions.request_bluetooth_enable()
+        elif self._blocker == "permissions":
+            pending = permissions.missing(
+                permissions.required() + permissions.optional())
+            # One in-app retry, then Settings: a permission denied twice is
+            # marked permanently denied and request() stops raising a dialog
+            # at all, which would leave this button doing nothing visible.
+            if pending and self._prompts < 2:
+                self._prompts += 1
+                permissions.request(pending, self._on_permission_result)
+            else:
+                permissions.open_app_settings()
 
     @mainthread
     def _set_status(self, text):
         self.root_widget.status = text
 
     def start_scan(self):
-        if self.root_widget.running:
+        if self.root_widget.running or not self.root_widget.ready:
             return
 
         notifier = None
@@ -196,6 +273,9 @@ class BertAlertApp(App):
 
     def _mark_stopped(self):
         self.root_widget.running = False
+        # A scan usually ends because a radio or permission went away, so the
+        # blocker is re-evaluated rather than assumed unchanged.
+        self._refresh_readiness()
 
     def stop_scan(self):
         if self._engine and self._loop and not self._loop.is_closed():
