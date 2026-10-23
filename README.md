@@ -29,10 +29,36 @@ Grab it from the **Build APK** workflow run under the Actions tab, or:
 
 ```
 gh run download --name BertAlert-debug-apk
-adb install BertAlert-*-debug.apk
+adb install bertalert-*-arm64-v8a-debug.apk
 ```
 
-The build is debug-signed and sideload-only.
+The build is debug-signed and sideload-only. Signing is APK Signature Scheme
+v2 only -- `minapi` is 26, so apksigner skips the v1 JAR signature that older
+devices would have needed. No root required.
+
+### First launch
+
+Everything is asked for in one batch on the first run, so the dialogs are
+cleared once rather than one per feature. Which ones appear depends on the
+device's API level: `BLUETOOTH_SCAN`/`BLUETOOTH_CONNECT` only exist from API 31
+and `POST_NOTIFICATIONS` from API 33, and below those the older install-time
+permissions cover the same ground without a prompt.
+
+Start stays disabled until a scan can actually succeed. When something is
+missing the status line says what, and a button above Start goes straight to
+the fix:
+
+| Blocker | Why it matters |
+| --- | --- |
+| Location permission | Both radios return empty results without it |
+| Approximate instead of precise | Wi-Fi scan results come back empty rather than erroring |
+| Location services toggle | Separate from the permission and just as fatal |
+| Bluetooth off | BLE is the half that actually sees bodycams |
+
+Denying a permission twice marks it permanently denied and Android stops
+raising the dialog, so the button re-prompts once and then opens the app's
+settings page instead. Notifications are treated as optional: refusing them
+leaves alerts on-screen only rather than blocking the scan.
 
 ### Why it is a rewrite and not a repackage
 
